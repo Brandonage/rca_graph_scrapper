@@ -7,8 +7,7 @@ import arrow
 def get_label_for_node(node_attr):
     return node_attr.get('image',node_attr.get('instance'))
 
-def get_type_for_node(node_attr):
-    return 'TO_DO'
+
 
 def insert_graph(col,graph_sequence,graph_id,name):
     start_ts = graph_sequence.keys()[0] # The starting timestamp point
@@ -33,10 +32,10 @@ def insert_nodes(col,timestamp,graph_ts):
         node_dict = {
             'node_id' : node_id,
             'label' : get_label_for_node(node_attr),
-            'type': get_type_for_node(node_attr),
-            'attributes' : node_attr,
-            'anomalies' : [],
-            'anomaly_level' : 1,
+            'type': node_attr['type'],
+            'attributes' : {k: v for k, v in node_attr.iteritems() if k not in ['anomalies','anomaly_level','type']},
+            'anomalies' : node_attr['anomalies'],
+            'anomaly_level' : node_attr['anomaly_level'],
             'timestamp' : arrow.Arrow.fromtimestamp(timestamp).datetime
         }
         list_of_nodes.append(node_dict)
@@ -44,7 +43,7 @@ def insert_nodes(col,timestamp,graph_ts):
     return result.inserted_ids
     # return dict(zip(result.inserted_ids,graph_ts.nodes()))
 
-def insert_edges(col,timestamp,graph_ts,nodes_ids):
+def insert_edges(col,timestamp,graph_ts):
     list_of_edges = []
     for source, target, edge_attr in graph_ts.edges(data=True):
         edge_dict = {
@@ -52,9 +51,9 @@ def insert_edges(col,timestamp,graph_ts,nodes_ids):
             'source' : source,
             'target' : target,
             'timestamp' : arrow.Arrow.fromtimestamp(timestamp).datetime,
-            'attributes' : edge_attr,
-            'anomalies': [],
-            'anomaly_level': 1
+            'attributes' : {k: v for k, v in edge_attr.iteritems() if k not in ['anomalies','anomaly_level']},
+            'anomalies': edge_attr['anomalies'],
+            'anomaly_level': edge_attr['anomaly_level']
         }
         list_of_edges.append(edge_dict)
     result = col.insert_many(list_of_edges,ordered=True)
@@ -70,7 +69,7 @@ def insert_graph_ts(col,timestamp,nodes_ids,edges_ids,graph_id):
 
 def insert_graph_timestamp(db,timestamp,graph_ts,graph_id):
     nodes_ids = insert_nodes(db['node'],timestamp,graph_ts)
-    edges_ids = insert_edges(db['edge'],timestamp,graph_ts,nodes_ids)
+    edges_ids = insert_edges(db['edge'],timestamp,graph_ts)
     graph_ts_ids = insert_graph_ts(db['graph.timestamp'],timestamp,nodes_ids,edges_ids,graph_id)
 
 def mongodb_insert_graph_seq(database,graph_sequence,graph_id,name):

@@ -4,6 +4,8 @@ import networkx as nx
 from os import makedirs, listdir, remove
 from os.path import exists, expanduser
 from mongo_exporter import mongodb_insert_graph_seq
+import pandas as pd
+import pickle
 
 
 def optional_float(f):
@@ -46,6 +48,28 @@ def load_gephx_sequence(graphs_folder):
         graph_sequence.append(nx.read_gexf(f))
     return graph_sequence
 
+def get_taxonomy_type(image_name):
+    taxonomy = {
+        'google/cadvisor:latest': 'MONITOR',
+        'prom/node-exporter': 'MONITOR',
+        'alvarobrandon/fmone-agent': 'CLIENT',
+        'ches/kafka': 'BACK_END',
+        'zookeeper': 'BACK_END',
+        'mesosphere/marathon:v1.5.1.1': 'FRONT_END',
+        'host' : 'HOST',
+        'sysdig/sysdig' : 'MONITOR'
+    }
+    return taxonomy.get(image_name,'UNKNOWN')
+
+def get_node_type(metric):
+    # return the taxonomy type for this metric. For the moment the taxonomy is based on the image name
+    # we assume that if it doesn't have an image then it's a host
+    return get_taxonomy_type(metric.get('image','host'))
+
+def categorize_nodes(graph):
+    for node, attributes in graph.nodes(data=True):
+        graph.add_node(node, attr_dict={'type' : get_node_type(attributes)})
+
 
 def create_prometheus_node(container_id,element_info,graph):
     """
@@ -54,22 +78,27 @@ def create_prometheus_node(container_id,element_info,graph):
     :param element_info: we get data through inplugin.collect() every coll_period secs
     :type element_info: DataFrame
     """
-    for metric in element_info.iterrows(): # I have a node to create
+    for idx, row in element_info.iterrows(): # I have a node to create
         # metric is a tuple that has as the first element the remaining index elements. Note how we eliminated the time
         # dimension since this is a snapshot, and we also eliminated the id dimension since we are slicing for each.
         # the two dimensions left are the type of metric and the host.
         # The second element of the tuple is a pd.series. It has the value for the type of metric and a dict with information
         # inserted by the scrapper for that metric
-        graph.add_node(container_id,attr_dict={metric[0][0] : optional_float(metric[1][0])}) # the metric cloud be a string or float
+        graph.add_node(container_id,attr_dict={idx[0] : optional_float(row.value)}) # the metric cloud be a string or float
         # some metrics have specific information about that container or element id in a dict. Things like the name or the
         # mesos task ID. This is contained in metric[1][1] and we are going to store that in the node as well. Note how usually these are repeated for the
         # same scrapper. For example cadvisor is always going to include mesos task ID if the container was launched
         # in Mesos. One thing we could do could be grouping by metric column but it's not hashable and so, we just call
         # the add_attribute function for each dict
-        graph.add_node(container_id,attr_dict=metric[1][1])
-        graph.add_edge(container_id,metric[0][1]) # and we also add an edge between the element and the host that contains it.
+        graph.add_node(container_id,attr_dict=row.metric)
+        # there is also the need to add the type of node it is ('backend','frontend'...)
+        graph.add_node(container_id,attr_dict={'type' : get_node_type(row.metric)})
+        # Finally we add an edge between the element and the host that contains it.
+        # NOTE: in the case of node_exporter this creates a self loop since the container_id is the same as the scraped host
+        graph.add_edge(idx[1],container_id)
 
 def add_prometheus_information(graph,prom_snapshot):
+    # use this query to get all the distinct values of images for this experiment set([d.get('image') for d in prom_snapshot['metric'].values])
     for container_id in prom_snapshot.index.get_level_values("id").values: # for each id in the index
         create_prometheus_node(container_id,element_info=prom_snapshot.xs(container_id,level="id"),graph=graph) # I take its information and I create a node in the graph
 
@@ -97,10 +126,28 @@ def build_graph_for_snapshot(prom_snapshot,sysdig_snapshot):
         add_prometheus_information(DG,prom_snapshot)
     if sysdig_snapshot is not None:
         add_sysdig_information(DG,sysdig_snapshot)
+    nx.set_node_attributes(DG,'anomalies',[])
+    nx.set_node_attributes(DG,'anomaly_level',1)
+    nx.set_edge_attributes(DG,'anomalies',[])
+    nx.set_edge_attributes(DG,'anomaly_level',1)
+    DG.remove_edges_from(DG.selfloop_edges())  # we remove the self loops that are formed with node_exporter
+    categorize_nodes(DG)
     return DG
 
+def tag_anomalous_nodes(graph_sequence,experiment_log):
+    flatten = lambda l: [item for sublist in l for item in sublist]
+    for idx, row in experiment_log[experiment_log['type']=='anomaly'].iterrows():
+        anomalous_graphs = {k: v for k, v in graph_sequence.iteritems() if k in xrange(row.date_start, row.date_end)}
+        for t, AG in anomalous_graphs.iteritems():
+            anomalous_neighbors = flatten([AG.neighbors(node) for node in row.nodes])
+            anomalous_edges = AG.edges(row.nodes)
+            nx.set_node_attributes(AG,'anomalies',dict(zip(anomalous_neighbors,[[row.event + ':' + row.aditional_info]] * len(anomalous_neighbors))))
+            nx.set_node_attributes(AG,'anomaly_level', dict(zip(anomalous_neighbors, [3] * len(anomalous_neighbors))))
+            nx.set_edge_attributes(AG,'anomalies',dict(zip(anomalous_edges,[[row.event + ':' + row.aditional_info]] * len(anomalous_edges))))
+            nx.set_edge_attributes(AG,'anomaly_level', dict(zip(anomalous_edges, [3] * len(anomalous_edges))))
 
-def build_graph_sequence(start,end,step,prometheus_path,sysdig_path):
+
+def build_graph_sequence(start,end,step,prometheus_path,sysdig_path,anomalies_file):
     graph_sequence = {}
     prom_df = create_prometheus_df(start,end,step,prometheus_path)
     sysdig_df = create_sysdig_df(start,end,sysdig_path)
@@ -116,12 +163,14 @@ def build_graph_sequence(start,end,step,prometheus_path,sysdig_path):
         G = build_graph_for_snapshot(prom_snapshot=prom_snapshot,
                                      sysdig_snapshot=sysdig_snapshot)
         graph_sequence[timestamp] = G
+    experiment_log = pd.read_pickle(anomalies_file)
+    tag_anomalous_nodes(graph_sequence, experiment_log)
     return graph_sequence
 
 
 if __name__ == '__main__':
     name = "First experiment"
-    mongodb = '10.130.224.163'
+    mongodb = 'localhost'
     folder_name = "rcavagrant__03_Nov_2017_16:25/"
     output_path = expanduser("~") + "/rca_graphs/" + folder_name
     if not exists(output_path):
@@ -131,8 +180,11 @@ if __name__ == '__main__':
     step = '1s'
     prometheus_path = 'http://fnancy.nancy.grid5000.fr:9090/api/v1/query_range'
     sysdig_path = '/Users/alvarobrandon/execo_experiments/rcavagrant__03_Nov_2017_16:25/'
+    anomalies_file = '/Users/alvarobrandon/execo_experiments/rcavagrant__03_Nov_2017_16:25/experiment_log.pickle'
     # timestamp = 1507561419  # What happened this second?. What containers where active and what were their metrics?
     # graph_sequence = load_gephx_sequence(output_path)
-    graph_sequence = build_graph_sequence(start,end,step,prometheus_path,sysdig_path)
+    # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
+    graph_sequence = build_graph_sequence(start,end,step,prometheus_path,sysdig_path,anomalies_file)
     # create_gephx_sequence(graph_sequence,output_path)
     mongodb_insert_graph_seq(mongodb,graph_sequence,'first_experiment',name)
+    # pickle.dump(graph_sequence,open(sysdig_path + 'graph_sequence.pickle', 'wb'))
