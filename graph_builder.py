@@ -50,7 +50,7 @@ def load_gephx_sequence(graphs_folder):
 
 def get_taxonomy_type(image_name):
     taxonomy = {
-        'google/cadvisor:latest': 'MONITOR',
+        'google/cadvisor': 'MONITOR',
         'prom/node-exporter': 'MONITOR',
         'alvarobrandon/fmone-agent': 'CLIENT',
         'ches/kafka': 'BACK_END',
@@ -93,9 +93,10 @@ def create_prometheus_node(container_id,element_info,graph):
         graph.add_node(container_id,attr_dict=row.metric)
         # there is also the need to add the type of node it is ('backend','frontend'...)
         graph.add_node(container_id,attr_dict={'type' : get_node_type(row.metric)})
-        # Finally we add an edge between the element and the host that contains it.
+        # Finally we add an edge from the host to the container that runs on it.
         # NOTE: in the case of node_exporter this creates a self loop since the container_id is the same as the scraped host
         graph.add_edge(idx[1],container_id)
+        graph.add_edge(container_id, idx[1])
 
 def add_prometheus_information(graph,prom_snapshot):
     # use this query to get all the distinct values of images for this experiment set([d.get('image') for d in prom_snapshot['metric'].values])
@@ -103,11 +104,13 @@ def add_prometheus_information(graph,prom_snapshot):
         create_prometheus_node(container_id,element_info=prom_snapshot.xs(container_id,level="id"),graph=graph) # I take its information and I create a node in the graph
 
 def add_sysdig_information(graph,sysdig_snapshot):
-    for idx, df_comm in sysdig_snapshot.reset_index(level=range(2, sysdig_snapshot.index.names.__len__())).groupby(level=[0, 1]):
+    for idx, df_comm in sysdig_snapshot.reset_index(level=range(4, sysdig_snapshot.index.names.__len__())).groupby(level=[0, 1, 2, 3]):
         if df_comm.shape[0] == 2:  # if there is only one node in our monitred data... (this will possibly be avoided when we include the native host processes)
             bytes_read, bytes_write = tuple(df_comm['sum'].values)
             req_read, req_write = tuple(df_comm['count'].values)
             # the destination of the edge is just the machine it communicates with, that is idx[1]
+            if '9.0.' in idx[1]:
+                print('There is an unkwnon container')
             graph.add_edge(df_comm['container.id'][0], idx[1], bytes_read=int(bytes_read), bytes_write=int(bytes_write),
                         req_read=int(req_read), req_write=int(req_write))
         if df_comm.shape[0]==4: # if the two nodes involved in the tcp pipe are present on the data
@@ -135,19 +138,34 @@ def build_graph_for_snapshot(prom_snapshot,sysdig_snapshot):
     return DG
 
 def tag_anomalous_nodes(graph_sequence,experiment_log):
-    flatten = lambda l: [item for sublist in l for item in sublist]
+    # flatten = lambda l: [item for sublist in l for item in sublist]
     for idx, row in experiment_log[experiment_log['type']=='anomaly'].iterrows():
         anomalous_graphs = {k: v for k, v in graph_sequence.iteritems() if k in xrange(row.date_start, row.date_end)}
         for t, AG in anomalous_graphs.iteritems():
-            anomalous_neighbors = flatten([AG.neighbors(node) for node in row.nodes])
+            # if list(row.nodes)[0] ==  'marathon-lb.marathon.mesos':
+            #     print "Search for the LB node and mark it as anomalous plis"
+            if type(row.nodes) is str: # fix for when the user in execo pass a string as a parameter to nodes
+                row.nodes = {row.nodes}
             anomalous_edges = AG.edges(row.nodes)
-            nx.set_node_attributes(AG,'anomalies',dict(zip(anomalous_neighbors,[[row.event + ':' + row.aditional_info]] * len(anomalous_neighbors))))
-            nx.set_node_attributes(AG,'anomaly_level', dict(zip(anomalous_neighbors, [3] * len(anomalous_neighbors))))
-            nx.set_edge_attributes(AG,'anomalies',dict(zip(anomalous_edges,[[row.event + ':' + row.aditional_info]] * len(anomalous_edges))))
+            nx.set_node_attributes(AG,'anomalies',dict(zip(row.nodes,[row.event + ':' + row.aditional_info] * len(row.nodes))))
+            nx.set_node_attributes(AG,'anomaly_level', dict(zip(row.nodes, [3] * len(row.nodes))))
+            nx.set_edge_attributes(AG,'anomalies',dict(zip(anomalous_edges,[row.event + ':' + row.aditional_info] * len(anomalous_edges))))
             nx.set_edge_attributes(AG,'anomaly_level', dict(zip(anomalous_edges, [3] * len(anomalous_edges))))
 
 
 def build_graph_sequence(start,end,step,prometheus_path,sysdig_path,anomalies_file):
+    """
+    Build a dictionary where keys are timestamps and values are networkX graphs. The graphs are built
+    from monitored prometheus and sysdig data ranging from start to end timestamps.
+    In addition anomalous nodes are tagged with the data contained in anomalies_file
+    :param start: timestamp
+    :param end: timestamp
+    :param step: seconds. Used by prometheus to do perform queries between ranges e.g. 1s
+    :param prometheus_path: the url of the prometheus server
+    :param sysdig_path: a path in the local filesystem with the sysdig.scrap files
+    :param anomalies_file: A file that contains the anomalies for a given experiment
+    :return:
+    """
     graph_sequence = {}
     prom_df = create_prometheus_df(start,end,step,prometheus_path)
     sysdig_df = create_sysdig_df(start,end,sysdig_path)
@@ -169,22 +187,40 @@ def build_graph_sequence(start,end,step,prometheus_path,sysdig_path,anomalies_fi
 
 
 if __name__ == '__main__':
-    name = "First experiment"
+    """
+    Several things are done within the main program thread
+    1. Read the information to build the graph from : 
+        - experiment_res_path: sysdig files, experiment_log.pickle
+        - prometheus_path: container metrics
+    2. Export the graph sequence built to gephx_output_path as a sequence of Gephi .gephx files
+    3. Export the graph sequence dictionary as a pickle into the experiment_res_path
+    So at the end we will have outputs in
+        - experiment_res_path (execo_results): the graph sequence in a pickle format
+        - gephx_output_path (RCAGephi): the graph sequence as a pickle
+    Note how in the RCAGephi path we will also have the matchings and the patterns that will be created 
+    by the rca_engine contained in a different python module
+    """
+    name = "second_fuzzy_cpu"
     mongodb = 'localhost'
-    folder_name = "rcavagrant__03_Nov_2017_16:25/"
-    output_path = expanduser("~") + "/rca_graphs/" + folder_name
-    if not exists(output_path):
-        makedirs(output_path)
-    start = 1509724046 - 60
-    end = 1509724046 + 60
+    start = 1512053561 - 7
+    end = 1512053591 + 7
     step = '1s'
+    # the folder where the results of the experiment are
+    experiments_res_path = '/Users/alvarobrandon/execo_experiments/first_evaluation_rca/'
+    # the prometheus server from where we are going to get the metrics
     prometheus_path = 'http://fnancy.nancy.grid5000.fr:9090/api/v1/query_range'
-    sysdig_path = '/Users/alvarobrandon/execo_experiments/rcavagrant__03_Nov_2017_16:25/'
-    anomalies_file = '/Users/alvarobrandon/execo_experiments/rcavagrant__03_Nov_2017_16:25/experiment_log.pickle'
+    # the sysdig metrics can be found on the experiment folder
+    sysdig_path = experiments_res_path
+    # the anomalies file is also on the experiment folder
+    anomalies_file = experiments_res_path + 'experiment_log.pickle'
+    # here we are going to dump the array of networX graphs that will be inserted into graph.timestamp
+    gephx_output_path = '/Users/alvarobrandon/RCAGephi/' + name + "/graph_sequence"
+    if not exists(gephx_output_path):
+        makedirs(gephx_output_path)
     # timestamp = 1507561419  # What happened this second?. What containers where active and what were their metrics?
     # graph_sequence = load_gephx_sequence(output_path)
     # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
     graph_sequence = build_graph_sequence(start,end,step,prometheus_path,sysdig_path,anomalies_file)
-    # create_gephx_sequence(graph_sequence,output_path)
-    mongodb_insert_graph_seq(mongodb,graph_sequence,'first_experiment',name)
-    # pickle.dump(graph_sequence,open(sysdig_path + 'graph_sequence.pickle', 'wb'))
+    create_gephx_sequence(graph_sequence,gephx_output_path)
+    mongodb_insert_graph_seq(mongodb,graph_sequence,name,name)
+    pickle.dump(graph_sequence,open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))

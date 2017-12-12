@@ -20,9 +20,9 @@ def create_prometheus_df(start,end,step,prometheus_url):
         ("container_memory_usage_bytes{name=~\".+\"}",'mem_usage'),
     ]
     host_query_and_metrics = [
-        ("sum(rate(node_cpu{{mode=\"user\"}}[{0}s])) without (cpu) * 100".format(range),'cpu_usr'),
-        ("sum(rate(node_cpu{{mode=\"system\"}}[{0}s])) without (cpu) * 100".format(range),'cpu_sys'),
-        ("sum(rate(node_cpu{{mode=\"iowait\"}}[{0}s])) without (cpu) * 100".format(range),'cpu_wait'),
+        ("avg without(cpu)(rate(node_cpu{{mode=\"user\"}}[{0}s]) * 100)".format(range),'cpu_usr'),
+        ("avg without(cpu)(rate(node_cpu{{mode=\"system\"}}[{0}s]) * 100)".format(range),'cpu_sys'),
+        ("avg without(cpu)(rate(node_cpu{{mode=\"iowait\"}}[{0}s]) * 100)".format(range),'cpu_wait'),
         ("sum(node_disk_bytes_read) without(device)",'disk_read'),
         ("sum(node_disk_bytes_written) without(device)",'disk_written'),
         ("sum(node_filesystem_free) without (device,fstype,mountpoint)",'fs_free'),

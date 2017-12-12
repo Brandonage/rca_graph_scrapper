@@ -73,6 +73,15 @@ def insert_graph_timestamp(db,timestamp,graph_ts,graph_id):
     graph_ts_ids = insert_graph_ts(db['graph.timestamp'],timestamp,nodes_ids,edges_ids,graph_id)
 
 def mongodb_insert_graph_seq(database,graph_sequence,graph_id,name):
+    """
+    Insert a graph in the graph and graph.timestamps collections from a dictionary of timestamps : networkX graphs
+    As parameters we can change the graph_id and name values of the graph collection
+    :param database: the address of the MongoDB
+    :param graph_sequence: dict {timestamp : networkX}
+    :param graph_id: str
+    :param name: str
+    :return:
+    """
     client = MongoClient(database,27017)
     db = client['graphs']
     insert_graph(db['graph'],graph_sequence,graph_id,name)

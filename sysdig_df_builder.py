@@ -53,6 +53,8 @@ def create_sysdig_df(start, end, sysdig_path):
     # we need to do an aggregation by sum and count. This creates new index that we are going to reset later on
     agg_df = data.groupby(['fd.cip',
                         'fd.sip',
+                        'fd.lport',
+                        'fd.rport',
                         'container.id',
                         'evt.host',
                         'evt.rawtime.s',
