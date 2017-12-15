@@ -13,21 +13,40 @@ def create_prometheus_df(start,end,step,prometheus_url):
     # we use the name=~\".+\" part to make sure that we only get containers. We will have to change this if we want to get
     # also the processes.
     container_query_and_metric = [
-        ("rate(container_cpu_user_seconds_total{{name=~\".+\"}}[{0}s])*100".format(range),'cpu_usr'),
-        ("rate(container_cpu_system_seconds_total{{name=~\".+\"}}[{0}s])*100".format(range),'cpu_sys'),
-        ("sum(container_network_receive_bytes_total{name=~\".+\"}) without (interface)",'net_recv'),
-        ("sum(container_network_transmit_bytes_total{name=~\".+\"}) without (interface)",'net_sent'),
+        ("rate(container_cpu_user_seconds_total{name=~\".+\"}[6s])*100",'cpu_usr'),
+        ("rate(container_cpu_system_seconds_total{name=~\".+\"}[6s])*100",'cpu_sys'),
+        ("rate(container_cpu_cfs_throttled_seconds_total{name=~\".+\"}[6s])*100", 'cpu_wait'),
+        ("rate(container_network_receive_bytes_total{name=~\".+\",interface=\"eth0\"}[6s])",'net_recv'),
+        ("rate(container_network_transmit_bytes_total{name=~\".+\",interface=\"eth0\"}[6s])",'net_sent'),
+        ("rate(container_network_receive_packets_total{name=~\".+\",interface=\"eth0\"}[6s])",'packet_recv'),
+        ("rate(container_network_transmit_packets_total{name=~\".+\",interface=\"eth0\"}[6s])",'packet_sent'),
         ("container_memory_usage_bytes{name=~\".+\"}",'mem_usage'),
+        ("container_memory_cache{name=~\".+\"}", 'mem_cache'),
+        ("rate(container_memory_failures_total{name=~\".+\",scope=\"container\",type=\"pgfault\"}[6s])","pg_fault"),
+        ("rate(container_memory_failures_total{name=~\".+\",scope=\"container\",type=\"pgmajfault\"}[6s])", "pgmaj_fault")
     ]
     host_query_and_metrics = [
-        ("avg without(cpu)(rate(node_cpu{{mode=\"user\"}}[{0}s]) * 100)".format(range),'cpu_usr'),
-        ("avg without(cpu)(rate(node_cpu{{mode=\"system\"}}[{0}s]) * 100)".format(range),'cpu_sys'),
-        ("avg without(cpu)(rate(node_cpu{{mode=\"iowait\"}}[{0}s]) * 100)".format(range),'cpu_wait'),
-        ("sum(node_disk_bytes_read) without(device)",'disk_read'),
-        ("sum(node_disk_bytes_written) without(device)",'disk_written'),
+        ("avg without(cpu)(rate(node_cpu{mode=\"user\"}[6s]) * 100)",'cpu_usr'),
+        ("avg without(cpu)(rate(node_cpu{mode=\"system\"}[6s]) * 100)",'cpu_sys'),
+        ("avg without(cpu)(rate(node_cpu{mode=\"iowait\"}[6s]) * 100)",'cpu_wait'),
+        ("rate(node_context_switches[6s])",'ctx_switch'),
+        ("rate(node_context_switches[6s])", 'node_forks'),
+        ("rate(node_vmstat_pgalloc_normal[6s])", 'vm_alloc'),
+        ("rate(node_vmstat_pgfault[6s])", 'vm_fault'),
+        ("rate(node_vmstat_pgfree[6s])", 'vm_free'),
+        ("sum without(device)(rate(node_disk_bytes_read[6s]))",'disk_read'),
+        ("sum without(device)(rate(node_disk_bytes_written[6s]))",'disk_written'),
         ("sum(node_filesystem_free) without (device,fstype,mountpoint)",'fs_free'),
         ("node_memory_MemFree",'mem_free'),
-        ("node_memory_MemTotal",'mem_total')
+        ("node_memory_MemTotal",'mem_total'),
+        ("node_memory_Mlocked", "mem_locked"),
+        ("node_memory_Cached", "mem_cached"),
+        ("node_sockstat_sockets_used","sockets_used"),
+        ("node_procs_running","procs_run"),
+        ("rate(node_network_transmit_packets{device=\"eth0\"}[6s])","packet_sent"),
+        ("rate(node_network_receive_packets{device=\"eth0\"}[6s])", "packet_recv"),
+        ("rate(node_network_transmit_bytes{device=\"eth0\"}[6s])", "net_sent"),
+        ("rate(node_network_receive_bytes{device=\"eth0\"}[6s])", "net_recv")
     ]
     list_of_df = []
     for query, metric in container_query_and_metric + host_query_and_metrics:
