@@ -6,6 +6,7 @@ from os.path import exists, expanduser
 from mongo_exporter import mongodb_insert_graph_seq
 import pandas as pd
 import pickle
+from numpy import unique
 
 
 def optional_float(f):
@@ -58,10 +59,10 @@ def get_taxonomy_type(image_name):
         'mesosphere/marathon:v1.5.2': 'FRONT_END',
         'host': 'HOST',
         'sysdig/sysdig': 'MONITOR',
-        'wordpress' : 'BACK_END',
-        'yokogawa/siege' : 'CLIENT',
-        'mesosphere/marathon-lb:v1.11.1' : 'FRONT_END',
-        'mysql' : 'BACK_END'
+        'wordpress': 'BACK_END',
+        'yokogawa/siege': 'CLIENT',
+        'mesosphere/marathon-lb:v1.11.1': 'FRONT_END',
+        'mysql': 'BACK_END'
     }
     return taxonomy.get(image_name, 'UNKNOWN')
 
@@ -114,18 +115,33 @@ def add_prometheus_information(graph, prom_snapshot):
 
 
 def add_sysdig_information(graph, sysdig_snapshot):
-    def one_row_edge_values(row):
+    def add_edge_values(row, idx, df_comm, graph):
+        external_agents = ['172.16.45.2']
+        # the source of the edge is always going to be the containerid for this entry
+        source_name = row['container.id']
+        # if for this df_comm we don't have any other containers involved (is empty)
+        if df_comm[df_comm['container.id'] != source_name]['container.id'].empty:
+            if idx[0] in external_agents:
+                dest_name = idx[0]  # the destination is the external node
+            else:
+                # if it's an internal IP and it's a one way communication
+                # the destination of the edge is just the machine it communicates with, that is idx[1]
+                dest_name = idx[1]
+            if '9.0.' in idx[1]:
+                print('There is an unkwnon container')
+        else:
+            dest_name = df_comm[df_comm['container.id'] != source_name]['container.id'].unique()[0]
+        # logic to determine if this entry is a read or write tcp request
         if row['evt.io_dir'] == 'write':
-            bytes_read, bytes_write = (0, row['sum'])
-            req_read, req_write = (0, row['count'])
+            graph.add_edge(source_name, dest_name,
+                           bytes_write=int(row['sum']),
+                           req_write=int(row['count']))
         if row['evt.io_dir'] == 'read':
-            bytes_read, bytes_write = (row['sum'], 0)
-            req_read, req_write = (row['count'], 0)
-        return bytes_read, bytes_write, req_read, req_write
+            graph.add_edge(source_name, dest_name,
+                           bytes_read=int(row['sum']),
+                           req_read=int(row['count']))
 
-
-
-    def process_df_comm(idx,df_comm,graph):
+    def process_df_comm(idx, df_comm, graph):
         # There can be four different types of dimensions for the DF_COMM depending on the sysdig data captured:
         # 1. two rows. This means that sysdig could only capture the communication through the pipe in one of the sides
         # e.g. marathon-user container which communicates with the mesos-agent that is not currently captured by sysdig
@@ -136,93 +152,112 @@ def add_sysdig_information(graph, sysdig_snapshot):
         # this happens also when the confirmation of a TCP write comes back (is captured) in the following snapshot
         # 4. Any other case. This TCP pipe is repeated across many nodes. e.g. Requests from localhost to the
         # embedded DNS docker server
-        external_agents = ['172.16.45.2']
-        dns_lookups = ['127.0.0.11','127.0.0.1']
+        dns_lookups = ['127.0.0.11', '127.0.0.1']
+        # This variable is going to represent the number of containers involved in this TCP pipe
+        tcp_pipe_conts = len(unique(df_comm['container.id'].values))
         if idx[1] not in dns_lookups:  # if the call doesn't involve DNS lookups #TODO Maybe consider these DNS too
-            if df_comm.shape[0] == 2:
-                # if there are two entries for the TCP pipe but it's not read and write from the same container
-                # e.g. marathon-lb reads 214 bytes and siege writes 225 bytes. This is probably a late response to a
-                # previously sent message
-                if df_comm['container.id'].unique().__len__()!=1:
-                    # for each of the row entries
-                    for row in df_comm.iterrows():
-                        # get the bytes and requests for a single write or read entry
-                        bytes_read, bytes_write, req_read, req_write = one_row_edge_values(row[1])
-                        # the source is going to be the container we are dealing with at the moment
-                        source_name = row[1]['container.id']
-                        # for each of the other containers in df_comm (not really needed since this is a 2 row DFrame)
-                        for dest_name in df_comm[df_comm['container.id'] != source_name]['container.id']:
-                            graph.add_edge(source_name, dest_name, bytes_read=int(bytes_read),
-                                           bytes_write=int(bytes_write),
-                                           req_read=int(req_read), req_write=int(req_write))
-                else:
-                    bytes_read, bytes_write = tuple(df_comm['sum'].values)
-                    req_read, req_write = tuple(df_comm['count'].values)
-                    # The source of the edge will always be the container that created event
-                    source_name = df_comm['container.id'][0]
-                    # When sysdig captures only one part of the pipeline it can be the server or the client part. We need to
-                    # add a logic to change the destination of the edge (we could do it for the source too)
-                    # if the client IP is one of the known external agents (e.g. prometheus in vm.lille)
-                    # then the container acts as a server
-                    if idx[0] in external_agents:
-                        dest_name = idx[0]  # the destination is the external node
-                    # if it's an internal IP and it's a one way communication then the destination is the IP
-                    else:
-                        # the destination of the edge is just the machine it communicates with, that is idx[1]
-                        dest_name = idx[1]
-                    graph.add_edge(source_name, dest_name,
-                                   bytes_read=int(bytes_read),
-                                   bytes_write=int(bytes_write),
-                                   req_read=int(req_read), req_write=int(req_write))
-                    if '9.0.' in idx[1]:
-                        print('There is an unkwnon container')
-            elif df_comm.shape[0] == 4:  # if the two nodes involved in the tcp pipe are present on the data
-                for source_name in df_comm['container.id'].unique():  # for each container id in the pipe communication df
-                    # we build a tuple with the list of values that represent the sum column with the read and written bytes
-                    bytes_read, bytes_write = tuple(df_comm[df_comm['container.id'] == source_name]['sum'].values)
-                    # same with the number of requests
-                    req_read, req_write = tuple(df_comm[df_comm['container.id'] == source_name]['count'].values)
-                    for dest_name in df_comm[df_comm['container.id'] != source_name]['container.id']:  # for the destination (the container that is not the source)
-                        graph.add_edge(source_name, dest_name, bytes_read=int(bytes_read), bytes_write=int(bytes_write),
-                                       req_read=int(req_read), req_write=int(req_write))
-            elif df_comm.shape[0] == 1:
-                for row in df_comm.iterrows():
-                # To handle a case where we only have either a read or write.
-                    print("Only {0} communication between {1} -> {2}".format(df_comm['evt.io_dir'].values[0],idx[0],idx[1]))
-                    bytes_read, bytes_write, req_read, req_write = one_row_edge_values(row[1])
-                    # from here we follow the same logic as a df_comm with size 2
-                    source_name = df_comm['container.id'][0]
-                    if idx[0] in external_agents:
-                        dest_name = idx[0]  # the destination is the external node
-                    # if it's an internal IP and it's a one way communication then the destination is the IP
-                    else:
-                        # the destination of the edge is just the machine it communicates with, that is idx[1]
-                        dest_name = idx[1]
-                    graph.add_edge(source_name, dest_name,
-                                   bytes_read=int(bytes_read),
-                                   bytes_write=int(bytes_write),
-                                   req_read=int(req_read), req_write=int(req_write))
-            else:
-                if df_comm.shape[0] == 3:
-                    print("The shape is 3")
-                # If it's not 4 or 2 the size of the df_comm then there are several communication process for different
-                # containers that have the same name for the TCP Pipe. This can only happen when we have a set
-                # of containers that happen to get the same IP. e.g. cadvisor chooses always the same IP
-                # The direction of this behaviour is usually One client -> * Several servers
-                print("Special entry with df_comm equal to {0} between {1} -> {2}".format(df_comm.shape[0],idx[0],idx[1]))
-                # break it into smaller df_comms by container and host and process it
-                for idx2, df_comm2 in df_comm.groupby(['container.id','evt.host']):
+            if tcp_pipe_conts > 2:  # Something's wrong. In a TCP pipe there can only be two containers involved
+                print(
+                    "Special entry with {0} rows in df_comm between {1} -> {2}".format(df_comm.shape[0], idx[0],
+                                                                                       idx[1]))
+                # There can be several reasons for this. The ones we have seen are calls to localhost for DNS resolving
+                # or containers that have the same IP through different hosts.
+                # The solution is to break it into smaller df_comms by container and host and process it
+                for idx2, df_comm2 in df_comm.groupby(['container.id', 'evt.host']):
                     # idx2 will be a tuple of container.id and host.
                     # we need a new_idx that is the already present index of the original df_comm
                     new_idx = df_comm2.index.values[0]
-                    process_df_comm(new_idx,df_comm2,graph)
+                    process_df_comm(new_idx, df_comm2, graph)
+            else:  # if there is one or two containers involved in the tcp pipe
+                # for each of the container entries
+                for row in df_comm.iterrows():
+                    # add the df_comm information to the graph for this particular row
+                    add_edge_values(row[1], idx, df_comm, graph)
+                    #
+                    #
+                    # if df_comm.shape[0] == 2:
+                    #     # if there are two entries for the TCP pipe but it's not read and write from the same container
+                    #     # e.g. marathon-lb reads 214 bytes and siege writes 225 bytes. This is probably a late response to a
+                    #     # previously sent message
+                    #     if df_comm['container.id'].unique().__len__()!=1:
+                    #         # for each of the row entries
+                    #         for row in df_comm.iterrows():
+                    #             # get the bytes and requests for a single write or read entry
+                    #             bytes_read, bytes_write, req_read, req_write = one_row_edge_values(row[1])
+                    #             # the source is going to be the container we are dealing with at the moment
+                    #             source_name = row[1]['container.id']
+                    #             # for each of the other containers in df_comm (not really needed since this is a 2 row DFrame)
+                    #             for dest_name in df_comm[df_comm['container.id'] != source_name]['container.id']:
+                    #                 graph.add_edge(source_name, dest_name, bytes_read=int(bytes_read),
+                    #                                bytes_write=int(bytes_write),
+                    #                                req_read=int(req_read), req_write=int(req_write))
+                    #     else:
+                    #         bytes_read, bytes_write = tuple(df_comm['sum'].values)
+                    #         req_read, req_write = tuple(df_comm['count'].values)
+                    #         # The source of the edge will always be the container that created event
+                    #         source_name = df_comm['container.id'][0]
+                    #         # When sysdig captures only one part of the pipeline it can be the server or the client part. We need to
+                    #         # add a logic to change the destination of the edge (we could do it for the source too)
+                    #         # if the client IP is one of the known external agents (e.g. prometheus in vm.lille)
+                    #         # then the container acts as a server
+                    #         if idx[0] in external_agents:
+                    #             dest_name = idx[0]  # the destination is the external node
+                    #         # if it's an internal IP and it's a one way communication then the destination is the IP
+                    #         else:
+                    #             # the destination of the edge is just the machine it communicates with, that is idx[1]
+                    #             dest_name = idx[1]
+                    #         graph.add_edge(source_name, dest_name,
+                    #                        bytes_read=int(bytes_read),
+                    #                        bytes_write=int(bytes_write),
+                    #                        req_read=int(req_read), req_write=int(req_write))
+                    #         if '9.0.' in idx[1]:
+                    #             print('There is an unkwnon container')
+                    # elif df_comm.shape[0] == 4:  # if the two nodes involved in the tcp pipe are present on the data
+                    #     for source_name in df_comm['container.id'].unique():  # for each container id in the pipe communication df
+                    #         # we build a tuple with the list of values that represent the sum column with the read and written bytes
+                    #         bytes_read, bytes_write = tuple(df_comm[df_comm['container.id'] == source_name]['sum'].values)
+                    #         # same with the number of requests
+                    #         req_read, req_write = tuple(df_comm[df_comm['container.id'] == source_name]['count'].values)
+                    #         for dest_name in df_comm[df_comm['container.id'] != source_name]['container.id']:  # for the destination (the container that is not the source)
+                    #             graph.add_edge(source_name, dest_name, bytes_read=int(bytes_read), bytes_write=int(bytes_write),
+                    #                            req_read=int(req_read), req_write=int(req_write))
+                    # elif df_comm.shape[0] == 1:
+                    #     for row in df_comm.iterrows():
+                    #     # To handle a case where we only have either a read or write.
+                    #         print("Only {0} communication between {1} -> {2}".format(df_comm['evt.io_dir'].values[0],idx[0],idx[1]))
+                    #         bytes_read, bytes_write, req_read, req_write = one_row_edge_values(row[1])
+                    #         # from here we follow the same logic as a df_comm with size 2
+                    #         source_name = df_comm['container.id'][0]
+                    #         if idx[0] in external_agents:
+                    #             dest_name = idx[0]  # the destination is the external node
+                    #         # if it's an internal IP and it's a one way communication then the destination is the IP
+                    #         else:
+                    #             # the destination of the edge is just the machine it communicates with, that is idx[1]
+                    #             dest_name = idx[1]
+                    #         graph.add_edge(source_name, dest_name,
+                    #                        bytes_read=int(bytes_read),
+                    #                        bytes_write=int(bytes_write),
+                    #                        req_read=int(req_read), req_write=int(req_write))
+                    # else:
+                    #     if df_comm.shape[0] == 3:
+                    #         print("The shape is 3")
+                    #     # If it's not 4 or 2 the size of the df_comm then there are several communication process for different
+                    #     # containers that have the same name for the TCP Pipe. This can only happen when we have a set
+                    #     # of containers that happen to get the same IP. e.g. cadvisor chooses always the same IP
+                    #     # The direction of this behaviour is usually One client -> * Several servers
+                    #     print("Special entry with df_comm equal to {0} between {1} -> {2}".format(df_comm.shape[0],idx[0],idx[1]))
+                    #     # break it into smaller df_comms by container and host and process it
+                    #     for idx2, df_comm2 in df_comm.groupby(['container.id','evt.host']):
+                    #         # idx2 will be a tuple of container.id and host.
+                    #         # we need a new_idx that is the already present index of the original df_comm
+                    #         new_idx = df_comm2.index.values[0]
+                    #         process_df_comm(new_idx,df_comm2,graph)
 
     # each df_comm represents a communication between two IP's e.g. container1IP -> container2IP.
     # idx represents the ip of the client in idx[0] and the server in idx[1]
-    for idx, df_comm in sysdig_snapshot.reset_index(level=range(2, sysdig_snapshot.index.names.__len__())).groupby(level=[0, 1]):
-            process_df_comm(idx,df_comm,graph)
-
-
+    for idx, df_comm in sysdig_snapshot.reset_index(level=range(2, sysdig_snapshot.index.names.__len__())).groupby(
+            level=[0, 1]):
+        process_df_comm(idx, df_comm, graph)
 
 
 def build_graph_for_snapshot(prom_snapshot, sysdig_snapshot):
@@ -243,7 +278,7 @@ def build_graph_for_snapshot(prom_snapshot, sysdig_snapshot):
 def tag_anomalous_nodes(graph_sequence, experiment_log):
     # flatten = lambda l: [item for sublist in l for item in sublist]
     for idx, row in experiment_log[experiment_log['type'] == 'anomaly'].iterrows():
-        anomalous_graphs = {k: v for k, v in graph_sequence.iteritems() if k in xrange(row.date_start, row.date_end)}
+        anomalous_graphs = {k: v for k, v in graph_sequence.iteritems() if k in xrange(row.date_start + 4, row.date_end + 4)}
         for t, AG in anomalous_graphs.iteritems():
             # if list(row.nodes)[0] ==  'marathon-lb.marathon.mesos':
             #     print "Search for the LB node and mark it as anomalous plis"
