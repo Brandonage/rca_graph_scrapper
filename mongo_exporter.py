@@ -15,14 +15,30 @@ def insert_graph(col,graph_sequence,graph_id,name):
         "graph_id" : graph_id,
         "creation_date" : arrow.Arrow.fromtimestamp(start_ts).datetime,
         "name" : name,
-        "graph_attributes": {
-            "visualization": {
-                "default_color": "gray"
-            }
-        },
+        "graph_attributes": {},
         "anomaly_level_settings": {
-            "min": 0,
-            "max": 3
+            "levels": [
+                {
+                    "name": "No-Data",
+                    "value": 0,
+                    "color": "black"
+                },
+                {
+                    "name": "Normal",
+                    "value": 1,
+                    "color": "gray"
+                },
+                {
+                    "name": "Warning",
+                    "value": 2,
+                    "color": "yellow"
+                },
+                {
+                    "name": "Danger",
+                    "value": 3,
+                    "color": "red"
+                }
+            ]
         }
     })
 

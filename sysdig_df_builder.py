@@ -9,7 +9,7 @@ import gzip
 # it will create a dataframe that is sliced in different dimensions the most important being time
 # TODO: Revise how many dimensions do we need. I think we need all these dimensions in order to do the sum and count for
 # each client, server, container.id, port????, host, container image and direction fo event
-def create_sysdig_df(start, end, sysdig_path):
+def create_sysdig_df(sysdig_path):
     scrape_files = [sysdig_path + f for f in listdir(sysdig_path) if 'scrap' in f]
     # We print some information on what machines we are going to analyse
     for file_in in scrape_files:
