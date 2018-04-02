@@ -9,6 +9,8 @@ import pickle
 from numpy import unique
 import re
 from collections import Counter
+import time
+current_milli_time = lambda: int(round(time.time() * 1000))
 
 old_names_start_end = [
     ('first_cpu_kafka', 1516874441 - 5, 1516874461 + 5),
@@ -234,20 +236,22 @@ def add_sysdig_information(graph, sysdig_snapshot):
                     print('There is an unkwnon container: communication from {0} -> {1} inside df_comm {2}'.format(
                         source_name, dest_name, df_comm))
                     # we add the node as an unknwon type. We will add the edge further down in the common logic.
-                    graph.add_node(dest_name, attr_dict={'image': 'unknown'})
+                    # graph.add_node(dest_name, attr_dict={'image': 'unknown'})
                     # we change to a version where an unknown communication attribute is added
-                    # graph.add_node(source_name,attr_dict={'delay': 'true'})
+                    dest_name = None
+                    graph.add_node(source_name,attr_dict={'delay': 'true'})
         else:
             dest_name = df_comm[df_comm['container.id'] != source_name]['container.id'].unique()[0]
         # logic to determine if this entry is a read or write tcp request
-        if row['evt.io_dir'] == 'write':
-            graph.add_edge(source_name, dest_name,
-                           bytes_write=int(row['sum']),
-                           req_write=int(row['count']))
-        if row['evt.io_dir'] == 'read':
-            graph.add_edge(source_name, dest_name,
-                           bytes_read=int(row['sum']),
-                           req_read=int(row['count']))
+        if dest_name is not None:
+            if row['evt.io_dir'] == 'write':
+                graph.add_edge(source_name, dest_name,
+                               bytes_write=int(row['sum']),
+                               req_write=int(row['count']))
+            if row['evt.io_dir'] == 'read':
+                graph.add_edge(source_name, dest_name,
+                               bytes_read=int(row['sum']),
+                               req_read=int(row['count']))
         # we will also add all the information we have from the sysdig entry to the nodes of the graphs
         # we do so, because we notice that at times we have entries for sysdig but not for prometheus
         # The information we can have in sysdig and not in prometheus is 1. The container.image 2. The relation between
@@ -367,7 +371,7 @@ def create_prometheus_df_backup(start, end, step, prometheus_path, file_out):
     prom_df.to_pickle(file_out)
 
 
-def build_graph_sequence(start, end, prometheus_df, huge_sysdig_df, anomalies_file):
+def build_graph_sequence(start, end, prometheus_df, huge_sysdig_df, anomalies_file,exec_profile):
     """
     Build a dictionary where keys are timestamps and values are networkX graphs. The graphs are built
     from monitored prometheus and sysdig data ranging from start to end timestamps.
@@ -392,9 +396,15 @@ def build_graph_sequence(start, end, prometheus_df, huge_sysdig_df, anomalies_fi
             prom_snapshot = prometheus_df.xs(timestamp, level='time')
         except KeyError:
             prom_snapshot = None
+        t1 = current_milli_time()
         G = build_graph_for_snapshot(prom_snapshot=prom_snapshot,
                                      sysdig_snapshot=sysdig_snapshot)
+        t2 = current_milli_time()
         graph_sequence[timestamp] = G
+        nnodes = G.number_of_nodes()
+        if nnodes not in exec_profile:
+            exec_profile[nnodes] = []
+        exec_profile[nnodes].append(t2-t1)
     experiment_log = pd.read_pickle(anomalies_file)
     tag_anomalous_nodes(graph_sequence, experiment_log)
     return graph_sequence
@@ -414,6 +424,7 @@ if __name__ == '__main__':
     Note how in the RCAGephi path we will also have the matchings and the patterns that will be created 
     by the rca_engine contained in a different python module
     """
+    exec_profile = {}
     names_start_end = [
         ('one_cpu_lb_random', 1521806868 - 5, 1521806883 + 5),
         ('two_cpu_lb_random', 1521806895 - 5, 1521806910 + 5),
@@ -451,9 +462,9 @@ if __name__ == '__main__':
     # building the sysdig dataframe is a very expensive process. We build it once and then we use the index to select
     # the data. Note how before we have a create_sysdig_df method that took start and end parameters to narrow the data
     # size
-    huge_sysdig_df = create_sysdig_df(sysdig_path)
-    huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
-    # huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+    #huge_sysdig_df = create_sysdig_df(sysdig_path)
+    #huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+    huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
     prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
     # the anomalies file is also on the experiment folder
     anomalies_file = experiments_res_path + 'experiment_log.pickle'
@@ -466,9 +477,126 @@ if __name__ == '__main__':
         # graph_sequence = load_gephx_sequence(output_path)
         # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
         # prom_df = create_prometheus_df(start, end, step, prometheus_path)
-        graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file)
+        graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file,exec_profile)
         create_gephx_sequence(graph_sequence, gephx_output_path)
         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
     # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
     #                             experiments_res_path + 'huge_prom_df.pickle')
+#     names_start_end = [
+#         ('one_cpu_spark_random', 1521796996 - 5, 1521797011 + 5),
+#         ('two_cpu_spark_random', 1521797028 - 5, 1521797043 + 5),
+#         ('three_cpu_spark_random', 1521797057 - 5, 1521797072 + 5),
+#         ('four_cpu_spark_random', 1521797115 - 5, 1521797130 + 5),
+#         ('five_cpu_spark_random', 1521797164 - 5, 1521797179 + 5),
+#         ('six_cpu_spark_random', 1521797201 - 5, 1521797216 + 5),
+#         ('one_band_spark_random', 1521797268 - 5, 1521797283 + 5),
+#         ('two_band_spark_random', 1521797357 - 5, 1521797372 + 5),
+#         ('three_band_spark_random', 1521797440 - 5, 1521797455 + 5),
+#         ('four_band_spark_random', 1521797553 - 5, 1521797568 + 5),
+#         ('five_band_spark_random', 1521797741 - 5, 1521797756 + 5),
+#         ('six_band_spark_random', 1521797776 - 5, 1521797791 + 5),
+#         ('one_disk_spark_random', 1521797913 - 5, 1521797928 + 5),
+#         ('two_disk_spark_random', 1521797949 - 5, 1521797964 + 5),
+#         ('three_disk_spark_random', 1521797978 - 5, 1521797993 + 5),
+#         ('four_disk_spark_random', 1521798042 - 5, 1521798057 + 5),
+#         ('five_disk_spark_random', 1521798096 - 5, 1521798111 + 5),
+#         ('six_disk_spark_random', 1521798128 - 5, 1521798143 + 5),
+#         ('one_bigheap_spark_random', 1521798171 - 5, 1521798186 + 5),
+#         ('two_bigheap_spark_random', 1521798200 - 5, 1521798215 + 5),
+#         ('three_bigheap_spark_random', 1521798242 - 5, 1521798257 + 5),
+#         ('four_bigheap_spark_random', 1521798276 - 5, 1521798291 + 5),
+#         ('five_bigheap_spark_random', 1521798332 - 5, 1521798347 + 5),
+#         ('six_bigheap_spark_random', 1521798369 - 5, 1521798384 + 5)
+# ]
+#     mongodb = 'localhost'
+#     step = '1s'
+#     # the folder where the results of the experiment are
+#     experiments_res_path = '/Users/alvarobrandon/execo_experiments/gold_spark_random/'
+#     # the prometheus server from where we are going to get the metrics
+#     prometheus_path = 'http://abrandon-vm.lille.grid5000.fr:9090/api/v1/query_range'
+#     # the sysdig metrics can be found on the experiment folder
+#     sysdig_path = experiments_res_path
+#     # building the sysdig dataframe is a very expensive process. We build it once and then we use the index to select
+#     # the data. Note how before we have a create_sysdig_df method that took start and end parameters to narrow the data
+#     # size
+#     # huge_sysdig_df = create_sysdig_df(sysdig_path)
+#     # huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+#     huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+#     prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
+#     # the anomalies file is also on the experiment folder
+#     anomalies_file = experiments_res_path + 'experiment_log.pickle'
+#     for name, start, end in names_start_end:
+#         # here we are going to dump the array of networX graphs that will be inserted into graph.timestamp
+#         gephx_output_path = '/Users/alvarobrandon/RCAGephi/' + name + "/graph_sequence/"
+#         if not exists(gephx_output_path):
+#             makedirs(gephx_output_path)
+#         # timestamp = 1507561419  # What happened this second?. What containers where active and what were their metrics?
+#         # graph_sequence = load_gephx_sequence(output_path)
+#         # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
+#         # prom_df = create_prometheus_df(start, end, step, prometheus_path)
+#         graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file,exec_profile)
+#         create_gephx_sequence(graph_sequence, gephx_output_path)
+#         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
+#         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
+#     # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
+#     #                             experiments_res_path + 'huge_prom_df.pickle')
+#     names_start_end = [
+#         ('one_cpu_kafka_random', 1521793677 - 5, 1521793692 + 5),
+#         ('two_cpu_kafka_random', 1521793705 - 5, 1521793720 + 5),
+#         ('three_cpu_kafka_random', 1521793736 - 5, 1521793751 + 5),
+#         ('four_cpu_kafka_random', 1521793768 - 5, 1521793783 + 5),
+#         ('five_cpu_kafka_random', 1521793792 - 5, 1521793807 + 5),
+#         ('six_cpu_kafka_random', 1521793831 - 5, 1521793846 + 5),
+#         ('one_band_kafka_random', 1521793874 - 5, 1521793889 + 5),
+#         ('two_band_kafka_random', 1521793953 - 5, 1521793968 + 5),
+#         ('three_band_kafka_random', 1521794007 - 5, 1521794022 + 5),
+#         ('four_band_kafka_random', 1521794068 - 5, 1521794083 + 5),
+#         ('five_band_kafka_random', 1521794128 - 5, 1521794143 + 5),
+#         ('six_band_kafka_random', 1521794221 - 5, 1521794236 + 5),
+#         ('one_disk_kafka_random', 1521794273 - 5, 1521794288 + 5),
+#         ('two_disk_kafka_random', 1521794322 - 5, 1521794337 + 5),
+#         ('three_disk_kafka_random', 1521794348 - 5, 1521794363 + 5),
+#         ('four_disk_kafka_random', 1521794376 - 5, 1521794391 + 5),
+#         ('five_disk_kafka_random', 1521794405 - 5, 1521794420 + 5),
+#         ('six_disk_kafka_random', 1521794434 - 5, 1521794449 + 5),
+#         ('one_bigheap_kafka_random', 1521794468 - 5, 1521794483 + 5),
+#         ('two_bigheap_kafka_random', 1521794512 - 5, 1521794527 + 5),
+#         ('three_bigheap_kafka_random', 1521794560 - 5, 1521794575 + 5),
+#         ('four_bigheap_kafka_random', 1521794615 - 5, 1521794630 + 5),
+#         ('five_bigheap_kafka_random', 1521794680 - 5, 1521794695 + 5),
+#         ('six_bigheap_kafka_random', 1521794722 - 5, 1521794737 + 5)
+# ]
+#     mongodb = 'localhost'
+#     step = '1s'
+#     # the folder where the results of the experiment are
+#     experiments_res_path = '/Users/alvarobrandon/execo_experiments/gold_kafka_random/'
+#     # the prometheus server from where we are going to get the metrics
+#     prometheus_path = 'http://abrandon-vm.lille.grid5000.fr:9090/api/v1/query_range'
+#     # the sysdig metrics can be found on the experiment folder
+#     sysdig_path = experiments_res_path
+#     # building the sysdig dataframe is a very expensive process. We build it once and then we use the index to select
+#     # the data. Note how before we have a create_sysdig_df method that took start and end parameters to narrow the data
+#     # size
+#     # huge_sysdig_df = create_sysdig_df(sysdig_path)
+#     # huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+#     huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+#     prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
+#     # the anomalies file is also on the experiment folder
+#     anomalies_file = experiments_res_path + 'experiment_log.pickle'
+#     for name, start, end in names_start_end:
+#         # here we are going to dump the array of networX graphs that will be inserted into graph.timestamp
+#         gephx_output_path = '/Users/alvarobrandon/RCAGephi/' + name + "/graph_sequence/"
+#         if not exists(gephx_output_path):
+#             makedirs(gephx_output_path)
+#         # timestamp = 1507561419  # What happened this second?. What containers where active and what were their metrics?
+#         # graph_sequence = load_gephx_sequence(output_path)
+#         # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
+#         # prom_df = create_prometheus_df(start, end, step, prometheus_path)
+#         graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file,exec_profile)
+#         create_gephx_sequence(graph_sequence, gephx_output_path)
+#         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
+#         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
+#     # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
+#     #                             experiments_res_path + 'huge_prom_df.pickle')
+#     print(exec_profile)
