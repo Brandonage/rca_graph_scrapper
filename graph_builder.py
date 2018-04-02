@@ -449,26 +449,26 @@ if __name__ == '__main__':
     # the sysdig metrics can be found on the experiment folder
     sysdig_path = experiments_res_path
     # building the sysdig dataframe is a very expensive process. We build it once and then we use the index to select
-    # the data. Note how before we have a create_sysdig_df method that took start and end parameters to narrow the data
-    # size
+    # the data.
     huge_sysdig_df = create_sysdig_df(sysdig_path)
+    # we pickle it to the results folder so we don't need to build it again in future executions
     huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
     # huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
-    prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
     # the anomalies file is also on the experiment folder
     anomalies_file = experiments_res_path + 'experiment_log.pickle'
     for name, start, end in names_start_end:
-        # here we are going to dump the array of networX graphs that will be inserted into graph.timestamp
+        # here we are going to dump the array of networX graphs that will be inserted into graph.timestamp in a gephx
+        # format. This format will be used to
         gephx_output_path = '/Users/alvarobrandon/RCAGephi/' + name + "/graph_sequence/"
         if not exists(gephx_output_path):
             makedirs(gephx_output_path)
-        # timestamp = 1507561419  # What happened this second?. What containers where active and what were their metrics?
-        # graph_sequence = load_gephx_sequence(output_path)
-        # graph_sequence = pickle.load(open(sysdig_path + 'graph_sequence.pickle', 'rb'))
-        # prom_df = create_prometheus_df(start, end, step, prometheus_path)
+        prom_df = create_prometheus_df(start, end, step, prometheus_path)
+        # We can also pickle it
+        # prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
         graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file)
         create_gephx_sequence(graph_sequence, gephx_output_path)
         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
-    # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
-    #                             experiments_res_path + 'huge_prom_df.pickle')
+    # create a big backup of the prometheus data for future uses
+    create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
+                                experiments_res_path + 'huge_prom_df.pickle')

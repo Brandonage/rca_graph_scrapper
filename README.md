@@ -1,0 +1,2 @@
+A framework to extract, format and aggregate the metrics coming from root cause analysis experiments with microservices.
+If you want to test it go to the sample_data directory and read the instructions to build a graph with the sample data provided
