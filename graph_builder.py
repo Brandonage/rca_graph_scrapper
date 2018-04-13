@@ -82,11 +82,13 @@ random_start_end = [
     ('third_stress_endpoint_lb_random', 1519122901 - 5, 1519122921 + 5)
 ]
 
+
 def optional_float(f):
     try:
         return float(f)
     except ValueError:
         return f
+
 
 def print_different_images(prom_df):
     """
@@ -98,6 +100,7 @@ def print_different_images(prom_df):
     for idx, row in prom_df.iterrows():
         images.append(row.metric.get('image'))
     print(set(images))
+
 
 def replace_infile(pathin, pathout, replacements):
     """
@@ -144,18 +147,18 @@ def get_taxonomy_type(image_name):
         'sysdig/sysdig': 'MONITOR',
         'wordpress': 'BACK_END',
         'yokogawa/siege': 'CLIENT',
-        'jordi/ab' : 'CLIENT',
+        'jordi/ab': 'CLIENT',
         'mesosphere/marathon-lb:v1.11.1': 'FRONT_END',
         'mysql': 'BACK_END',
-        'alvarobrandon/spark-worker' : 'BACK_END',
-        'uhopper/hadoop-datanode:2.8.1' : 'BACK_END',
-        'alvarobrandon/spark-master' : 'FRONT_END',
-        'uhopper/hadoop-namenode:2.8.1' : 'FRONT_END',
-        'alvarobrandon/spark-bench' : 'CLIENT',
-        'unknown' : 'UNKNOWN'
+        'alvarobrandon/spark-worker': 'BACK_END',
+        'uhopper/hadoop-datanode:2.8.1': 'BACK_END',
+        'alvarobrandon/spark-master': 'FRONT_END',
+        'uhopper/hadoop-namenode:2.8.1': 'FRONT_END',
+        'alvarobrandon/spark-bench': 'CLIENT',
+        'unknown': 'UNKNOWN'
     }
     # if the label is not here then we don't know what it is (N/A)
-    taxonomy_type = taxonomy.get(image_name,'N/A')
+    taxonomy_type = taxonomy.get(image_name, 'N/A')
     return taxonomy_type
 
 
@@ -168,9 +171,8 @@ def categorize_nodes(graph):
     for node, attributes in graph.nodes(data=True):
         graph.add_node(node, attr_dict={'type': get_node_type(attributes)})
         # Apart from that if the type of the node is unknown then give a name to the image. We do so for Gephi visual
-        if get_node_type(attributes)=="N/A":
+        if get_node_type(attributes) == "N/A":
             graph.add_node(node, attr_dict={'image': 'N/A'})
-
 
 
 def create_prometheus_node(container_id, element_info, graph):
@@ -197,7 +199,7 @@ def create_prometheus_node(container_id, element_info, graph):
         # if there is not an image entry for the metric then it should be a host. This is a fix to be able to
         # visualise hosts in Gephi
         if not row.metric.get('image'):
-            graph.add_node(container_id,attr_dict={'image' : 'host'})
+            graph.add_node(container_id, attr_dict={'image': 'host'})
         # Finally we add an edge from the host to the container that runs on it.
         # NOTE: in the case of node_exporter this creates a self loop since the container_id is the same as the scraped host
         graph.add_edge(idx[1], container_id)
@@ -229,7 +231,7 @@ def add_sysdig_information(graph, sysdig_snapshot):
                 # if it's an internal IP and it's a one way communication
                 # the destination of the edge is just the machine it communicates with, that is idx[1]
                 dest_name = idx[1]
-                is_unknown_ip = re.match(r'9\.0\.(?:[0-9]+\.*){2}',dest_name)
+                is_unknown_ip = re.match(r'9\.0\.(?:[0-9]+\.*){2}', dest_name)
                 if is_unknown_ip:
                     print('There is an unkwnon container: communication from {0} -> {1} inside df_comm {2}'.format(
                         source_name, dest_name, df_comm))
@@ -252,11 +254,10 @@ def add_sysdig_information(graph, sysdig_snapshot):
         # we do so, because we notice that at times we have entries for sysdig but not for prometheus
         # The information we can have in sysdig and not in prometheus is 1. The container.image 2. The relation between
         # container and host
-        graph.add_node(source_name, attr_dict={'image' : row['container.image']}) # the docker image
-        graph.add_edge(source_name, row['evt.host']) # the relation between container and host
+        graph.add_node(source_name, attr_dict={'image': row['container.image']})  # the docker image
+        graph.add_edge(source_name, row['evt.host'])  # the relation between container and host
         graph.add_edge(row['evt.host'], source_name)
         graph.add_node(row['evt.host'], attr_dict={'image': 'host'})
-
 
     def process_df_comm(idx, df_comm, graph):
         # There can be four different types of dimensions for the DF_COMM depending on the sysdig data captured:
@@ -312,26 +313,28 @@ def build_graph_for_snapshot(prom_snapshot, sysdig_snapshot):
     categorize_nodes(DG)
     return DG
 
-def nodes_with_conn_problems(AG,threshold):
-    unknwown_ids = [nid for nid, attrdict in AG.nodes(data=True) if attrdict.get('image')=='unknown']
+
+def nodes_with_conn_problems(AG, threshold):
+    unknwown_ids = [nid for nid, attrdict in AG.nodes(data=True) if attrdict.get('image') == 'unknown']
     incoming_nodes = [nodeid for nodeid, dest in AG.in_edges(unknwown_ids)]
     count = Counter(incoming_nodes)
     anomalous_nodes = [k for k, v in count.iteritems() if v >= threshold]
     if anomalous_nodes:
         nx.set_node_attributes(AG, 'anomalies',
                                dict(zip(anomalous_nodes,
-                                        ["Number of unknown connections > {0}".format(threshold)] * len(anomalous_nodes))
+                                        ["Number of unknown connections > {0}".format(threshold)] * len(
+                                            anomalous_nodes))
                                     )
                                )
         nx.set_node_attributes(AG, 'anomaly_level', dict(zip(anomalous_nodes, [3] * len(anomalous_nodes))))
         anomalous_edges = AG.edges(anomalous_nodes)
         nx.set_edge_attributes(AG, 'anomalies',
                                dict(zip(anomalous_edges,
-                                        ["Number of unknown connections > {0}".format(threshold)] * len(anomalous_edges))
+                                        ["Number of unknown connections > {0}".format(threshold)] * len(
+                                            anomalous_edges))
                                     )
                                )
         nx.set_edge_attributes(AG, 'anomaly_level', dict(zip(anomalous_edges, [3] * len(anomalous_edges))))
-
 
 
 def tag_anomalous_nodes(graph_sequence, experiment_log):
@@ -360,14 +363,15 @@ def tag_anomalous_nodes(graph_sequence, experiment_log):
                 nx.set_edge_attributes(AG, 'anomaly_level', dict(zip(anomalous_edges, [3] * len(anomalous_edges))))
             except KeyError:
                 print("Impossible to set the anomaly {0} in the node {1}: The node does not exist"
-                      .format(row.event,row.nodes))
+                      .format(row.event, row.nodes))
+
 
 def create_prometheus_df_backup(start, end, step, prometheus_path, file_out):
     prom_df = create_prometheus_df(start, end, step, prometheus_path)
     prom_df.to_pickle(file_out)
 
 
-def build_graph_sequence(start, end, prometheus_df, huge_sysdig_df, anomalies_file):
+def build_graph_sequence(start, end, step, prometheus_df, huge_sysdig_df, anomalies_file):
     """
     Build a dictionary where keys are timestamps and values are networkX graphs. The graphs are built
     from monitored prometheus and sysdig data ranging from start to end timestamps.
@@ -380,16 +384,19 @@ def build_graph_sequence(start, end, prometheus_df, huge_sysdig_df, anomalies_fi
     :param anomalies_file: A file that contains the anomalies for a given experiment
     :return:
     """
+    step_int = int(step.replace('s', ''))
     graph_sequence = {}
     # optional: check the different docker images captured by Prometheus in this scenario
     # print_different_images(prom_df)
-    for timestamp in xrange(int(start), int(end)):
+    for timestamp in xrange(int(start), int(end),step_int):
+        timestamp_range = xrange(timestamp,timestamp + step_int)
         try:
-            sysdig_snapshot = huge_sysdig_df.xs(timestamp, level='evt.rawtime.s')
+            sysdig_snapshot = huge_sysdig_df[huge_sysdig_df.index.isin(list(timestamp_range), level='evt.rawtime.s')].groupby(
+                ['fd.cip', 'fd.sip', 'container.id', 'evt.host', 'container.image', 'evt.io_dir']).sum()
         except KeyError:
             sysdig_snapshot = None
         try:
-            prom_snapshot = prometheus_df.xs(timestamp, level='time')
+            prom_snapshot = prometheus_df[prometheus_df.index.isin([timestamp_range], level='time')]
         except KeyError:
             prom_snapshot = None
         G = build_graph_for_snapshot(prom_snapshot=prom_snapshot,
@@ -414,36 +421,39 @@ if __name__ == '__main__':
     Note how in the RCAGephi path we will also have the matchings and the patterns that will be created 
     by the rca_engine contained in a different python module
     """
+    # names_start_end = [
+    #     ('one_cpu_lb_random', 1521806868 - 5, 1521806883 + 5),
+    #     ('two_cpu_lb_random', 1521806895 - 5, 1521806910 + 5),
+    #     ('three_cpu_lb_random', 1521806932 - 5, 1521806947 + 5),
+    #     ('four_cpu_lb_random', 1521806973 - 5, 1521806988 + 5),
+    #     ('five_cpu_lb_random', 1521807006 - 5, 1521807021 + 5),
+    #     ('six_cpu_lb_random', 1521807053 - 5, 1521807068 + 5),
+    #     ('one_band_lb_random', 1521807081 - 5, 1521807096 + 5),
+    #     ('two_band_lb_random', 1521807156 - 5, 1521807171 + 5),
+    #     ('three_band_lb_random', 1521807242 - 5, 1521807257 + 5),
+    #     ('four_band_lb_random', 1521807315 - 5, 1521807330 + 5),
+    #     ('five_band_lb_random', 1521807389 - 5, 1521807404 + 5),
+    #     ('six_band_lb_random', 1521807458 - 5, 1521807473 + 5),
+    #     ('one_disk_lb_random', 1521807533 - 5, 1521807548 + 5),
+    #     ('two_disk_lb_random', 1521807557 - 5, 1521807572 + 5),
+    #     ('three_disk_lb_random', 1521807597 - 5, 1521807612 + 5),
+    #     ('four_disk_lb_random', 1521807622 - 5, 1521807637 + 5),
+    #     ('five_disk_lb_random', 1521807645 - 5, 1521807660 + 5),
+    #     ('six_disk_lb_random', 1521807673 - 5, 1521807688 + 5),
+    #     ('one_bigheap_lb_random', 1521807697 - 5, 1521807712 + 5),
+    #     ('two_bigheap_lb_random', 1521807728 - 5, 1521807743 + 5),
+    #     ('three_bigheap_lb_random', 1521807764 - 5, 1521807779 + 5),
+    #     ('four_bigheap_lb_random', 1521807794 - 5, 1521807809 + 5),
+    #     ('five_bigheap_lb_random', 1521807827 - 5, 1521807842 + 5),
+    #     ('six_bigheap_lb_random', 1521807858 - 5, 1521807873 + 5)
+    # ]
     names_start_end = [
-        ('one_cpu_lb_random', 1521806868 - 5, 1521806883 + 5),
-        ('two_cpu_lb_random', 1521806895 - 5, 1521806910 + 5),
-        ('three_cpu_lb_random', 1521806932 - 5, 1521806947 + 5),
-        ('four_cpu_lb_random', 1521806973 - 5, 1521806988 + 5),
-        ('five_cpu_lb_random', 1521807006 - 5, 1521807021 + 5),
-        ('six_cpu_lb_random', 1521807053 - 5, 1521807068 + 5),
-        ('one_band_lb_random', 1521807081 - 5, 1521807096 + 5),
-        ('two_band_lb_random', 1521807156 - 5, 1521807171 + 5),
-        ('three_band_lb_random', 1521807242 - 5, 1521807257 + 5),
-        ('four_band_lb_random', 1521807315 - 5, 1521807330 + 5),
-        ('five_band_lb_random', 1521807389 - 5, 1521807404 + 5),
-        ('six_band_lb_random', 1521807458 - 5, 1521807473 + 5),
-        ('one_disk_lb_random', 1521807533 - 5, 1521807548 + 5),
-        ('two_disk_lb_random', 1521807557 - 5, 1521807572 + 5),
-        ('three_disk_lb_random', 1521807597 - 5, 1521807612 + 5),
-        ('four_disk_lb_random', 1521807622 - 5, 1521807637 + 5),
-        ('five_disk_lb_random', 1521807645 - 5, 1521807660 + 5),
-        ('six_disk_lb_random', 1521807673 - 5, 1521807688 + 5),
-        ('one_bigheap_lb_random', 1521807697 - 5, 1521807712 + 5),
-        ('two_bigheap_lb_random', 1521807728 - 5, 1521807743 + 5),
-        ('three_bigheap_lb_random', 1521807764 - 5, 1521807779 + 5),
-        ('four_bigheap_lb_random', 1521807794 - 5, 1521807809 + 5),
-        ('five_bigheap_lb_random', 1521807827 - 5, 1521807842 + 5),
-        ('six_bigheap_lb_random', 1521807858 - 5, 1521807873 + 5)
-]
+        ('example_logs', 1523540370, 1523540490)
+    ]
     mongodb = 'localhost'
-    step = '1s'
+    step = '15s'
     # the folder where the results of the experiment are
-    experiments_res_path = '/Users/alvarobrandon/execo_experiments/gold_lb_random_host_anomalies/'
+    experiments_res_path = '/Users/alvarobrandon/execo_experiments/logs_experiment/'
     # the prometheus server from where we are going to get the metrics
     prometheus_path = 'http://abrandon-vm.lille.grid5000.fr:9090/api/v1/query_range'
     # the sysdig metrics can be found on the experiment folder
@@ -465,10 +475,10 @@ if __name__ == '__main__':
         prom_df = create_prometheus_df(start, end, step, prometheus_path)
         # We can also pickle it
         # prom_df = pd.read_pickle(experiments_res_path + 'huge_prom_df.pickle')
-        graph_sequence = build_graph_sequence(start, end, prom_df, huge_sysdig_df, anomalies_file)
+        graph_sequence = build_graph_sequence(start, end, step, prom_df, huge_sysdig_df, anomalies_file)
         create_gephx_sequence(graph_sequence, gephx_output_path)
         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
     # create a big backup of the prometheus data for future uses
-    create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
-                                experiments_res_path + 'huge_prom_df.pickle')
+    # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
+    #                            experiments_res_path + 'huge_prom_df.pickle')
