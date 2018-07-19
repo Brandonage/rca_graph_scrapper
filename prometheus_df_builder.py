@@ -6,6 +6,29 @@ import re
 # or do it here with the metrics separated in two differents arrays
 
 
+
+def michals_avg_std(start,end,step,prometheus_url):
+    df = create_prometheus_df(start,end,step,prometheus_url)
+    scenario = "cassandra"
+    dataframe_mean = []
+    dataframe_std = []
+    for container_id in df.index.levels[0].values:
+        row_mean = {}
+        row_std = {}
+        row_mean.update({'container_id' : container_id})
+        row_std.update({'container_id' : container_id})
+        for metric in df.xs(container_id,level="id").reset_index(level=0)['metric_type'].unique():
+            mean = df.xs((container_id, metric), level=["id", "metric_type"])['value'].astype(float).mean()
+            std = df.xs((container_id, metric), level=["id", "metric_type"])['value'].astype(float).std()
+            row_mean.update({metric : mean})
+            row_std.update({metric : std})
+        dataframe_mean.append(row_mean)
+        dataframe_std.append(row_std)
+    df_mean = pd.DataFrame(dataframe_mean)
+    df_std = pd.DataFrame(dataframe_std)
+    df_mean.to_excel('/Users/alvarobrandon/Desktop/{0}_stats_mean.xls'.format(scenario))
+    df_std.to_excel('/Users/alvarobrandon/Desktop/{0}_stats_std.xls'.format(scenario))
+
 # This function is going to build a dataframe from a prometheus endpoint with the metrics of the containers and hosts
 # sliced in three dimensions: time, metric, container_id and host
 def create_prometheus_df(start,end,step,prometheus_url):

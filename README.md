@@ -1,2 +1,92 @@
-A framework to extract, format and aggregate the metrics coming from root cause analysis experiments with microservices.
-If you want to test it go to the sample_data directory and read the instructions to build a graph with the sample data provided
+This is a project that dumps into a MongoDB a series of graphs representing the state of a series of containers running during an experiment.
+This work was done inside the context of a research paper dealing with root cause analysis for microservice architectures. 
+These containers can be coordinated with any container orchestrator of choice (in our case we used DCOS). This framework assumes: 
+1. There is a Prometheus endpoint that has stored the metrics of the containers for the period of time that we are interested in
+2. The user has a collection of sysdig dumps for each of the hosts that form part of the cluster (More information on how to get those dumps below)
+3. There is a mongoDB running into which the user wants to dump all the information.
+
+
+
+## Data Scheme of the MongoDB database
+
+Graph: This is the general graph name and its creation data. It has a collection of GraphTimeStamps associated
+```json
+{
+    graph_id: string,
+    creation_date: ISO 8061 datetime,
+    name: string,
+    graph_attributes: {},
+    anomaly_level_settings: { min: int, max: int } 
+}
+```
+
+GraphTimestamp: This graph captures the state of all the containers for a periodic time window specified by the user
+```json
+{
+    graph_id: string, // Graph.graph_id
+    timestamp: ISO 8061 datetime,
+    nodes: MongoId[], // Node._id list
+    edges: MongoId[]  // Edge._id list
+}
+```
+
+
+Node: A node with its attributes representing the metrics of a container or host
+```json
+{
+    node_id: string (common to all timestamps), // NOT a MongoId
+    label: string (name shown),
+    type: string (symbol shown),
+    attributes: {},
+    anomalies: [],
+    anomaly_level: int,
+    timestamp: ISO 8061 datetime
+}
+```
+
+Edge: An edge representing the connection between containers or machines
+```json
+{
+    edge_id: string (common to all timestamps),
+    source: string, // Node.node_id
+    target: string, // Node.node_id
+    timestamp: ISO 8061 datetime,
+    attributes: {},
+    anomalies: [],
+    anomaly_level: int
+}
+```
+
+## Building the graphs and dumping into MongoDB
+
+The graph_builder.py script is the one responsible of building and dumping the graphs into the MongoDB. The script does not receive any arguments
+but they can be hardcoded by the user instead. Another possibility is to enhance the functionality of this framework by passing a yaml file as an argument
+to the script instead of hardcoding. Here are the relevant arguments in the script.
+1. names_start_end: A list of 3-tuples that have, first, the name that we want to give to the graph, second, the starting timestamp for that graph, third,
+the end timestamp for that graph. Example: 
+```names_start_end = [('kafka_normal_behaviour', 1525337866, 1525341746), ('kafka_anomalous_behaviour', 1525339643, 1525349946)]```  
+Will create a graph called kafka_normal_behaviour from timestamp 1525337866 to timestamp 1525341746. After that another graph called kafka_anomalous_behaviour
+will be created from 1525339643 to 1525349946
+2. mongodb: The adress for the MongoDB Example: localhost
+3. step: The time window in seconds that we want for each of the GraphTimestamp graphs that will be created in the mongoDB. Example: 30s
+4. experiment_res_path: The folder where we have the different dumps of sysdig. The script is going to ingest this dumps to build the 
+graphs. Example: '/Users/alvarobrandon/execo_experiments/michal_kafka_logs/'
+5. prometheus_path: The Prometheus query_range API endpoint from where to get the monitored information of Prometheus. Example: http://abrandon.lille.grid.es:9090/api/v1/query_range
+6. anomalies_file (Optional): An optional file containing a log with all the different anomalies introduced in the system during that time range. 
+
+
+### Starting sysdig dump
+
+In order to start sysdig and dumping the monitored information in each of the hosts use the following command in each of the machines (substitute {{{host}}} for the IP of that host):
+```
+sudo docker run -i -t --name sysdig --privileged \
+-v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro \
+-v /boot:/host/boot:ro -v /lib/modules:/host/lib/modules:ro -v /usr:/host/usr:ro -v /home/vagrant:/host/vagrant \
+sysdig/sysdig sysdig "not(proc.name contains stress-ng)" and "(fd.type=ipv4 or fd.type=ipv6)" and evt.is_io=true \
+-p"%evt.rawtime.s,%fd.num,%fd.type,%evt.type,%evt.dir,%proc.name,%proc.pid,%container.name,%container.image,%container.id,%container.type, \
+%fd.name,%fd.cip,%fd.sip,%fd.lip,%fd.rip,%fd.is_server,%fd.cport,%fd.sport,%fd.lport,%fd.rport,%fd.l4proto,%evt.io_dir,%evt.category,%evt.rawarg.res" > $HOME/{{{host}}}.scrap
+```
+
+This will create a {hostIP.scrap} file that should be gunzipped and downloaded from the host to the experiment_res_path variable specified in graph_builder.py
+The not(proc.name contains stress-ng) is specific to our use case since we did not want to monitor any traffic generated by the stress-ng process. 
+This can be changed depending on your use case.

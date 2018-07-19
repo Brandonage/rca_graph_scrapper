@@ -10,78 +10,6 @@ from numpy import unique
 import re
 from collections import Counter
 
-old_names_start_end = [
-    ('first_cpu_kafka', 1516874441 - 5, 1516874461 + 5),
-    ('second_cpu_kafka', 1516874493 - 5, 1516874513 + 5),
-    ('third_cpu_kafka', 1516874607 - 5, 1516874627 + 5),
-    ('first_bandwidth75_kafka', 1516874660 - 5, 1516874680 + 5),
-    ('second_bandwidth75_kafka', 1516874748 - 5, 1516874768 + 5),
-    ('third_bandwidth75_kafka', 1516874826 - 5, 1516874846 + 5),
-    ('first_disk_kafka', 1516874914 - 5, 1516874934 + 5),
-    ('second_disk_kafka', 1516874986 - 5, 1516875006 + 5),
-    ('third_disk_kafka', 1516875029 - 5, 1516875049 + 5),
-    ('first_network_kafka', 1516875077 - 5, 1516875097 + 5),
-    ('second_network_kafka', 1516875133 - 5, 1516875153 + 5),
-    ('third_network_kafka', 1516875190 - 5, 1516875210 + 5),
-    ('first_bigheap_kafka', 1516875260 - 5, 1516875275 + 5),
-    ('second_bigheap_kafka', 1516875312 - 5, 1516875327 + 5),
-    ('third_bigheap_kafka', 1516875367 - 5, 1516875382 + 5),
-    ('first_zlib_kafka', 1516875421 - 5, 1516875441 + 5),
-    ('second_zlib_kafka', 1516875471 - 5, 1516875491 + 5),
-    ('third_zlib_kafka', 1516875505 - 5, 1516875525 + 5),
-    ('first_cpu_lb', 1516876149 - 5, 1516876169 + 5),
-    ('second_cpu_lb', 1516876197 - 5, 1516876217 + 5),
-    ('third_cpu_lb', 1516876253 - 5, 1516876273 + 5),
-    ('first_bandwidth75_lb', 1516876296 - 5, 1516876316 + 5),
-    ('second_bandwidth75_lb', 1516876404 - 5, 1516876424 + 5),
-    ('third_bandwidth75_lb', 1516876523 - 5, 1516876543 + 5),
-    ('first_disk_lb', 1516876617 - 5, 1516876637 + 5),
-    ('second_disk_lb', 1516876663 - 5, 1516876683 + 5),
-    ('third_disk_lb', 1516876718 - 5, 1516876738 + 5),
-    ('first_network_lb', 1516876780 - 5, 1516876800 + 5),
-    ('second_network_lb', 1516876862 - 5, 1516876882 + 5),
-    ('third_network_lb', 1516876953 - 5, 1516876973 + 5),
-    ('first_bigheap_lb', 1516877023 - 5, 1516877038 + 5),
-    ('second_bigheap_lb', 1516877088 - 5, 1516877103 + 5),
-    ('third_bigheap_lb', 1516877168 - 5, 1516877183 + 5),
-    ('first_zlib_lb', 1516877574 - 5, 1516877594 + 5),
-    ('second_zlib_lb', 1516877609 - 5, 1516877629 + 5),
-    ('third_zlib_lb', 1516877658 - 5, 1516877678 + 5),
-    ('first_wrong_lb_conf', 1516878833 - 5, 1516878843),
-    ('second_wrong_lb_conf', 1516878843, 1516878853),
-    ('third_wrong_lb_conf', 1516878853, 1516878863),
-    ('first_stress_endpoint_lb', 1516879061 - 5, 1516879081 + 5),
-    ('second_stress_endpoint_lb', 1516879224 - 5, 1516879244 + 5),
-    ('third_stress_endpoint_lb', 1516879383 - 5, 1516879403 + 5)
-]
-
-random_start_end = [
-    ('first_cpu_lb_random', 1519120696 - 5, 1519120716 + 5),
-    ('second_cpu_lb_random', 1519120727 - 5, 1519120747 + 5),
-    ('third_cpu_lb_random', 1519120759 - 5, 1519120779 + 5),
-    ('first_bandwidth75_lb_random', 1519120826 - 5, 1519120846 + 5),
-    ('second_bandwidth75_lb_random', 1519120899 - 5, 1519120919 + 5),
-    ('third_bandwidth75_lb_random', 1519120981 - 5, 1519121001 + 5),
-    ('first_disk_lb_random', 1519121164 - 5, 1519121184 + 5),
-    ('second_disk_lb_random', 1519121209 - 5, 1519121229 + 5),
-    ('third_disk_lb_random', 1519121253 - 5, 1519121273 + 5),
-    ('first_network_lb_random', 1519121296 - 5, 1519121316 + 5),
-    ('second_network_lb_random', 1519121338 - 5, 1519121358 + 5),
-    ('third_network_lb_random', 1519121371 - 5, 1519121391 + 5),
-    ('first_bigheap_lb_random', 1519121443 - 5, 1519121458 + 5),
-    ('second_bigheap_lb_random', 1519121478 - 5, 1519121493 + 5),
-    ('third_bigheap_lb_random', 1519121506 - 5, 1519121521 + 5),
-    ('first_zlib_lb_random', 1519121578 - 5, 1519121598 + 5),
-    ('second_zlib_lb_random', 1519121625 - 5, 1519121645 + 5),
-    ('third_zlib_lb_random', 1519121689 - 5, 1519121709 + 5),
-    ('first_wrong_lb_conf_random', 1519122188 - 5, 1519122208),
-    ('second_wrong_lb_conf_random', 1519122208, 1519122228),
-    ('third_wrong_lb_conf_random', 1519122228, 1519122248),
-    ('first_stress_endpoint_lb_random', 1519122653 - 5, 1519122673 + 5),
-    ('second_stress_endpoint_lb_random', 1519122792 - 5, 1519122812 + 5),
-    ('third_stress_endpoint_lb_random', 1519122901 - 5, 1519122921 + 5)
-]
-
 
 def optional_float(f):
     try:
@@ -142,7 +70,7 @@ def get_taxonomy_type(image_name):
         'alvarobrandon/fmone-agent': 'CLIENT',
         'ches/kafka': 'BACK_END',
         'zookeeper': 'BACK_END',
-        'mesosphere/marathon:v1.5.6': 'FRONT_END',
+        'mesosphere/marathon:v1.5.8': 'FRONT_END',
         'host': 'HOST',
         'sysdig/sysdig': 'MONITOR',
         'wordpress': 'BACK_END',
@@ -155,6 +83,8 @@ def get_taxonomy_type(image_name):
         'alvarobrandon/spark-master': 'FRONT_END',
         'uhopper/hadoop-namenode:2.8.1': 'FRONT_END',
         'alvarobrandon/spark-bench': 'CLIENT',
+        'cassandra:latest' : 'BACK_END',
+        'alvarobrandon/ycsb' : 'CLIENT',
         'unknown': 'UNKNOWN'
     }
     # if the label is not here then we don't know what it is (N/A)
@@ -396,14 +326,18 @@ def build_graph_sequence(start, end, step, prometheus_df, huge_sysdig_df, anomal
         except KeyError:
             sysdig_snapshot = None
         try:
-            prom_snapshot = prometheus_df[prometheus_df.index.isin([timestamp_range], level='time')]
+            prom_snapshot = prometheus_df[prometheus_df.index.isin(list(timestamp_range), level='time')]
         except KeyError:
             prom_snapshot = None
         G = build_graph_for_snapshot(prom_snapshot=prom_snapshot,
                                      sysdig_snapshot=sysdig_snapshot)
         graph_sequence[timestamp] = G
-    experiment_log = pd.read_pickle(anomalies_file)
-    tag_anomalous_nodes(graph_sequence, experiment_log)
+    try:
+        experiment_log = pd.read_pickle(anomalies_file)
+        tag_anomalous_nodes(graph_sequence, experiment_log)
+    except IOError:
+        print 'There is no experiment_log.pickle to be read on the provided path'
+
     return graph_sequence
 
 
@@ -421,39 +355,13 @@ if __name__ == '__main__':
     Note how in the RCAGephi path we will also have the matchings and the patterns that will be created 
     by the rca_engine contained in a different python module
     """
-    # names_start_end = [
-    #     ('one_cpu_lb_random', 1521806868 - 5, 1521806883 + 5),
-    #     ('two_cpu_lb_random', 1521806895 - 5, 1521806910 + 5),
-    #     ('three_cpu_lb_random', 1521806932 - 5, 1521806947 + 5),
-    #     ('four_cpu_lb_random', 1521806973 - 5, 1521806988 + 5),
-    #     ('five_cpu_lb_random', 1521807006 - 5, 1521807021 + 5),
-    #     ('six_cpu_lb_random', 1521807053 - 5, 1521807068 + 5),
-    #     ('one_band_lb_random', 1521807081 - 5, 1521807096 + 5),
-    #     ('two_band_lb_random', 1521807156 - 5, 1521807171 + 5),
-    #     ('three_band_lb_random', 1521807242 - 5, 1521807257 + 5),
-    #     ('four_band_lb_random', 1521807315 - 5, 1521807330 + 5),
-    #     ('five_band_lb_random', 1521807389 - 5, 1521807404 + 5),
-    #     ('six_band_lb_random', 1521807458 - 5, 1521807473 + 5),
-    #     ('one_disk_lb_random', 1521807533 - 5, 1521807548 + 5),
-    #     ('two_disk_lb_random', 1521807557 - 5, 1521807572 + 5),
-    #     ('three_disk_lb_random', 1521807597 - 5, 1521807612 + 5),
-    #     ('four_disk_lb_random', 1521807622 - 5, 1521807637 + 5),
-    #     ('five_disk_lb_random', 1521807645 - 5, 1521807660 + 5),
-    #     ('six_disk_lb_random', 1521807673 - 5, 1521807688 + 5),
-    #     ('one_bigheap_lb_random', 1521807697 - 5, 1521807712 + 5),
-    #     ('two_bigheap_lb_random', 1521807728 - 5, 1521807743 + 5),
-    #     ('three_bigheap_lb_random', 1521807764 - 5, 1521807779 + 5),
-    #     ('four_bigheap_lb_random', 1521807794 - 5, 1521807809 + 5),
-    #     ('five_bigheap_lb_random', 1521807827 - 5, 1521807842 + 5),
-    #     ('six_bigheap_lb_random', 1521807858 - 5, 1521807873 + 5)
-    # ]
     names_start_end = [
-        ('example_logs', 1523540370, 1523540490)
+        ('kafka_normal_behaviour', 1525337866 - 60, 1525341746 + 60)
     ]
     mongodb = 'localhost'
-    step = '15s'
+    step = '30s'
     # the folder where the results of the experiment are
-    experiments_res_path = '/Users/alvarobrandon/execo_experiments/logs_experiment/'
+    experiments_res_path = '/Users/alvarobrandon/execo_experiments/michal_kafka_logs/'
     # the prometheus server from where we are going to get the metrics
     prometheus_path = 'http://abrandon-vm.lille.grid5000.fr:9090/api/v1/query_range'
     # the sysdig metrics can be found on the experiment folder
@@ -462,7 +370,7 @@ if __name__ == '__main__':
     # the data.
     huge_sysdig_df = create_sysdig_df(sysdig_path)
     # we pickle it to the results folder so we don't need to build it again in future executions
-    huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
+    # huge_sysdig_df.to_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
     # huge_sysdig_df = pd.read_pickle(experiments_res_path + 'huge_sysdig_df.pickle')
     # the anomalies file is also on the experiment folder
     anomalies_file = experiments_res_path + 'experiment_log.pickle'
@@ -480,5 +388,5 @@ if __name__ == '__main__':
         mongodb_insert_graph_seq(mongodb, graph_sequence, name, name)
         pickle.dump(graph_sequence, open(experiments_res_path + '{0}.pickle'.format(name), 'wb'))
     # create a big backup of the prometheus data for future uses
-    # create_prometheus_df_backup(1521796996 - 10, 1521798384 + 10, step, prometheus_path,
-    #                            experiments_res_path + 'huge_prom_df.pickle')
+    # create_prometheus_df_backup(1525337866 - 60, 1525341746 + 60, step, prometheus_path,
+    #                           experiments_res_path + 'huge_prom_df.pickle')
